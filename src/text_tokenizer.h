@@ -30,7 +30,7 @@ public:
     std::vector<int32_t> encode(const std::string & text) const;
     
     // Encode with TTS format: <|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n
-    std::vector<int32_t> encode_for_tts(const std::string & text) const;
+    std::vector<int32_t> encode_for_tts(const std::string & text, const std::string & instruction = "") const;
     
     // Decode token IDs to text
     std::string decode(const std::vector<int32_t> & tokens) const;

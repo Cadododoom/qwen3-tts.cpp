@@ -3,20 +3,11 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 
 namespace qwen3_tts {
-
-namespace {
-struct shared_backend_state {
-    ggml_backend_t backend = nullptr;
-    int32_t ref_count = 0;
-};
-
-shared_backend_state & get_shared_backend_state() {
-    static shared_backend_state state;
-    return state;
-}
-}
 
 GGUFLoader::GGUFLoader() = default;
 
@@ -27,10 +18,95 @@ GGUFLoader::~GGUFLoader() {
 ggml_backend_t init_preferred_backend(const char * component_name, std::string * error_msg) {
     if (error_msg) error_msg->clear();
 
-    auto & shared = get_shared_backend_state();
-    if (shared.backend) {
-        shared.ref_count++;
-        return shared.backend;
+    std::string dev_str;
+    const char * env_val = nullptr;
+
+    if (component_name) {
+        if (strcmp(component_name, "TTSTransformer") == 0) {
+            env_val = std::getenv("QWEN3_TTS_TRANSFORMER_DEVICE");
+        } else if (strcmp(component_name, "AudioTokenizerDecoder") == 0) {
+            env_val = std::getenv("QWEN3_TTS_DECODER_DEVICE");
+        } else if (strcmp(component_name, "AudioTokenizerEncoder") == 0) {
+            env_val = std::getenv("QWEN3_TTS_ENCODER_DEVICE");
+        }
+    }
+
+    if (!env_val || env_val[0] == '\0') {
+        env_val = std::getenv("QWEN3_TTS_DEVICE");
+    }
+
+    if (env_val && env_val[0] != '\0') {
+        dev_str = env_val;
+    }
+
+    if (!dev_str.empty()) {
+        fprintf(stderr, "[Backend Selection] Component '%s' requested device string: '%s'\n",
+                component_name ? component_name : "unknown", dev_str.c_str());
+    }
+
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+        return s;
+    };
+
+    std::string dev_str_lower = to_lower(dev_str);
+
+    if (dev_str_lower == "cpu") {
+        ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
+        if (!backend && error_msg) {
+            *error_msg = "Failed to initialize CPU backend";
+        }
+        return backend;
+    }
+
+    if (!dev_str.empty()) {
+        ggml_backend_dev_t dev = ggml_backend_dev_by_name(dev_str.c_str());
+        if (dev) {
+            ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+            if (backend) {
+                return backend;
+            }
+        }
+
+        bool is_digit = !dev_str.empty() && std::all_of(dev_str.begin(), dev_str.end(), ::isdigit);
+        if (is_digit) {
+            int idx = std::stoi(dev_str);
+
+            std::string vk_name = "Vulkan" + dev_str;
+            dev = ggml_backend_dev_by_name(vk_name.c_str());
+            if (dev) {
+                ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+                if (backend) return backend;
+            }
+
+            std::string cuda_name = "CUDA" + dev_str;
+            dev = ggml_backend_dev_by_name(cuda_name.c_str());
+            if (dev) {
+                ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+                if (backend) return backend;
+            }
+
+            std::string hip_name = "HIP" + dev_str;
+            dev = ggml_backend_dev_by_name(hip_name.c_str());
+            if (dev) {
+                ggml_backend_t backend = ggml_backend_dev_init(dev, nullptr);
+                if (backend) return backend;
+            }
+
+            int non_cpu_count = 0;
+            for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+                ggml_backend_dev_t d = ggml_backend_dev_get(i);
+                if (ggml_backend_dev_type(d) != GGML_BACKEND_DEVICE_TYPE_CPU) {
+                    if (non_cpu_count == idx) {
+                        ggml_backend_t backend = ggml_backend_dev_init(d, nullptr);
+                        if (backend) return backend;
+                    }
+                    non_cpu_count++;
+                }
+            }
+        }
+
+        fprintf(stderr, "[Backend Selection Warning] Requested device '%s' was not found or failed to initialize. Falling back to default order.\n", dev_str.c_str());
     }
 
     ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU, nullptr);
@@ -49,31 +125,13 @@ ggml_backend_t init_preferred_backend(const char * component_name, std::string *
         *error_msg = "Failed to initialize backend (IGPU/GPU/ACCEL/CPU) for " + std::string(name);
     }
 
-    if (backend) {
-        shared.backend = backend;
-        shared.ref_count = 1;
-    }
-
     return backend;
 }
 
 void release_preferred_backend(ggml_backend_t backend) {
-    if (!backend) {
-        return;
+    if (backend) {
+        ggml_backend_free(backend);
     }
-
-    auto & shared = get_shared_backend_state();
-    if (shared.backend == backend) {
-        shared.ref_count--;
-        if (shared.ref_count <= 0) {
-            ggml_backend_free(shared.backend);
-            shared.backend = nullptr;
-            shared.ref_count = 0;
-        }
-        return;
-    }
-
-    ggml_backend_free(backend);
 }
 
 bool GGUFLoader::open(const std::string & path) {
@@ -158,14 +216,10 @@ bool load_tensor_data_from_file(
     const std::map<std::string, struct ggml_tensor *> & tensors,
     ggml_backend_buffer_t & buffer,
     std::string & error_msg,
-    enum ggml_backend_dev_type preferred_backend_type
+    ggml_backend_t backend
 ) {
-    ggml_backend_t backend = ggml_backend_init_by_type(preferred_backend_type, nullptr);
-    if (!backend && preferred_backend_type != GGML_BACKEND_DEVICE_TYPE_CPU) {
-        backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
-    }
     if (!backend) {
-        error_msg = "Failed to initialize backend for GGUF tensor loader";
+        error_msg = "Null backend passed to load_tensor_data_from_file";
         return false;
     }
     
@@ -173,7 +227,6 @@ bool load_tensor_data_from_file(
     buffer = ggml_backend_alloc_ctx_tensors(model_ctx, backend);
     if (!buffer) {
         error_msg = "Failed to allocate tensor buffer";
-        ggml_backend_free(backend);
         return false;
     }
     
@@ -181,7 +234,6 @@ bool load_tensor_data_from_file(
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) {
         error_msg = "Failed to open file for reading: " + path;
-        ggml_backend_free(backend);
         return false;
     }
     
@@ -206,14 +258,12 @@ bool load_tensor_data_from_file(
         if (fseek(f, data_offset + offset, SEEK_SET) != 0) {
             error_msg = "Failed to seek to tensor data: " + std::string(name);
             fclose(f);
-            ggml_backend_free(backend);
             return false;
         }
         
         if (fread(read_buf.data(), 1, nbytes, f) != nbytes) {
             error_msg = "Failed to read tensor data: " + std::string(name);
             fclose(f);
-            ggml_backend_free(backend);
             return false;
         }
         
@@ -221,7 +271,6 @@ bool load_tensor_data_from_file(
     }
     
     fclose(f);
-    ggml_backend_free(backend);
     
     return true;
 }

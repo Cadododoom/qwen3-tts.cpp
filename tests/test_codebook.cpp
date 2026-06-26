@@ -51,11 +51,13 @@ int main() {
     tensors["tok_dec.vq_first.0.codebook"] = codebook;
     tensors["tok_dec.vq_first.0.usage"] = usage;
     
+    ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
     ggml_backend_buffer_t buffer = nullptr;
     std::string error;
     if (!qwen3_tts::load_tensor_data_from_file("models/qwen3-tts-tokenizer-f16.gguf", 
-                                                loader.get_ctx(), ctx, tensors, buffer, error)) {
+                                                loader.get_ctx(), ctx, tensors, buffer, error, backend)) {
         fprintf(stderr, "Failed to load tensor data: %s\n", error.c_str());
+        ggml_backend_free(backend);
         return 1;
     }
     
@@ -122,7 +124,6 @@ int main() {
     struct ggml_cgraph * gf = ggml_new_graph(ctx_compute);
     ggml_build_forward_expand(gf, row);
     
-    ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
     ggml_backend_graph_compute(backend, gf);
     
     printf("Row shape: [%lld, %lld]\n", (long long)row->ne[0], (long long)row->ne[1]);

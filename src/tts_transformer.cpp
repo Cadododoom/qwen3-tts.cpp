@@ -110,6 +110,13 @@ bool TTSTransformer::load_model(const std::string & model_path) {
         return false;
     }
     
+    state_.backend = init_preferred_backend("TTSTransformer", &error_msg_);
+    if (!state_.backend) {
+        gguf_free(ctx);
+        if (meta_ctx) ggml_free(meta_ctx);
+        return false;
+    }
+
     if (!load_tensor_data(model_path, ctx)) {
         free_transformer_model(model_);
         gguf_free(ctx);
@@ -120,10 +127,6 @@ bool TTSTransformer::load_model(const std::string & model_path) {
     gguf_free(ctx);
     if (meta_ctx) ggml_free(meta_ctx);
     
-    state_.backend = init_preferred_backend("TTSTransformer", &error_msg_);
-    if (!state_.backend) {
-        return false;
-    }
     ggml_backend_dev_t device = ggml_backend_get_device(state_.backend);
     const char * device_name = device ? ggml_backend_dev_name(device) : "Unknown";
     fprintf(stderr, "  TTSTransformer backend: %s\n", device_name);
@@ -622,22 +625,21 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
  }
 
 bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_context * ctx) {
-    ggml_backend_t backend = init_preferred_backend("TTSTransformer", &error_msg_);
+    ggml_backend_t backend = state_.backend;
     if (!backend) {
+        error_msg_ = "Null backend in TTSTransformer::load_tensor_data";
         return false;
     }
     
     model_.buffer = ggml_backend_alloc_ctx_tensors(model_.ctx, backend);
     if (!model_.buffer) {
         error_msg_ = "Failed to allocate tensor buffer";
-        release_preferred_backend(backend);
         return false;
     }
     
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) {
         error_msg_ = "Failed to open file for reading: " + path;
-        release_preferred_backend(backend);
         return false;
     }
     
@@ -662,14 +664,12 @@ bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_cont
         if (fseek(f, data_offset + offset, SEEK_SET) != 0) {
             error_msg_ = "Failed to seek to tensor data: " + std::string(name);
             fclose(f);
-            release_preferred_backend(backend);
             return false;
         }
         
         if (fread(read_buf.data(), 1, nbytes, f) != nbytes) {
             error_msg_ = "Failed to read tensor data: " + std::string(name);
             fclose(f);
-            release_preferred_backend(backend);
             return false;
         }
         
@@ -677,7 +677,6 @@ bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_cont
     }
     
     fclose(f);
-    release_preferred_backend(backend);
     
     return true;
 }
@@ -1241,8 +1240,7 @@ struct ggml_cgraph * TTSTransformer::build_prefill_forward_graph(int32_t n_token
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
+        cur = ggml_mul_mat(ctx0, layer.ffn_down, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }
@@ -1386,8 +1384,7 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past) {
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
+        cur = ggml_mul_mat(ctx0, layer.ffn_down, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }
@@ -1506,8 +1503,7 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_graph(int32_t n_prev_codes)
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * old_ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, old_ffn_down_f32, cur);
+        cur = ggml_mul_mat(ctx0, layer.ffn_down, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }
@@ -1650,8 +1646,7 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph() {
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
+        cur = ggml_mul_mat(ctx0, layer.ffn_down, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }
@@ -1806,8 +1801,7 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
         
         cur = ggml_mul(ctx0, gate, up);
         
-        struct ggml_tensor * step_ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
-        cur = ggml_mul_mat(ctx0, step_ffn_down_f32, cur);
+        cur = ggml_mul_mat(ctx0, layer.ffn_down, cur);
         
         inpL = ggml_add(ctx0, cur, inpFF);
     }

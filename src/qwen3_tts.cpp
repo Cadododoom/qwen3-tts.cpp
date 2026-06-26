@@ -81,8 +81,8 @@ static void log_memory_usage(const char * label) {
             format_bytes(mem.phys_footprint_bytes).c_str());
 }
 
-static void resample_linear(const float * input, int input_len, int input_rate,
-                            std::vector<float> & output, int output_rate) {
+void resample_linear(const float * input, int input_len, int input_rate,
+                     std::vector<float> & output, int output_rate) {
     double ratio = (double)input_rate / output_rate;
     int output_len = (int)((double)input_len / ratio);
     output.resize(output_len);
@@ -105,7 +105,7 @@ Qwen3TTS::Qwen3TTS() = default;
 
 Qwen3TTS::~Qwen3TTS() = default;
 
-bool Qwen3TTS::load_models(const std::string & model_dir) {
+bool Qwen3TTS::load_models(const std::string & model_dir, const std::string & model_name) {
     int64_t t_start = get_time_ms();
     log_memory_usage("load/start");
 
@@ -116,14 +116,18 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     
     // Construct model paths — prefer quantized (q8_0) over full-precision (f16)
     std::string tts_model_path;
-    std::string q8_path = model_dir + "/qwen3-tts-0.6b-q8_0.gguf";
-    std::string f16_path = model_dir + "/qwen3-tts-0.6b-f16.gguf";
-    FILE * q8_check = fopen(q8_path.c_str(), "r");
-    if (q8_check) {
-        fclose(q8_check);
-        tts_model_path = q8_path;
+    if (!model_name.empty()) {
+        tts_model_path = model_dir + "/" + model_name;
     } else {
-        tts_model_path = f16_path;
+        std::string q8_path = model_dir + "/qwen3-tts-0.6b-q8_0.gguf";
+        std::string f16_path = model_dir + "/qwen3-tts-0.6b-f16.gguf";
+        FILE * q8_check = fopen(q8_path.c_str(), "r");
+        if (q8_check) {
+            fclose(q8_check);
+            tts_model_path = q8_path;
+        } else {
+            tts_model_path = f16_path;
+        }
     }
     std::string tokenizer_model_path = model_dir + "/qwen3-tts-tokenizer-f16.gguf";
     tts_model_path_ = tts_model_path;
@@ -368,7 +372,7 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text,
     
     // Step 2: Tokenize input text
     int64_t t_tokenize_start = get_time_ms();
-    std::vector<int32_t> text_tokens = tokenizer_.encode_for_tts(text);
+    std::vector<int32_t> text_tokens = tokenizer_.encode_for_tts(text, params.instruction);
     result.t_tokenize_ms = get_time_ms() - t_tokenize_start;
     sample_memory("synth/after-tokenize");
     

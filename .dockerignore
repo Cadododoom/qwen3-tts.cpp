@@ -1,0 +1,16 @@
+build/
+ggml/build/
+.venv/
+models/
+*.wav
+*.bin
+*.json
+.git/
+.github/
+.sisyphus/
+consistent_narrator.wav
+persona_reference.wav
+test.wav
+test_basic.wav
+test_j1.wav
+test_nv.wav

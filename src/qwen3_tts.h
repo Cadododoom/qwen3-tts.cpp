@@ -41,6 +41,8 @@ struct tts_params {
     // Language ID for codec (2050=en, 2069=ru, 2055=zh, 2058=ja, 2064=ko, 2053=de, 2061=fr, 2054=es)
     int32_t language_id = 2050;
 
+    // Instruction for VoiceDesign model
+    std::string instruction = "";
 };
 
 // TTS generation result
@@ -86,7 +88,7 @@ public:
     
     // Load all models from directory
     // model_dir should contain: transformer.gguf, tokenizer.gguf, vocoder.gguf
-    bool load_models(const std::string & model_dir);
+    bool load_models(const std::string & model_dir, const std::string & model_name = "");
     
     // Generate speech from text
     // text: input text to synthesize
@@ -164,5 +166,9 @@ bool load_audio_file(const std::string & path, std::vector<float> & samples,
 // Utility: Save audio file (WAV format)
 bool save_audio_file(const std::string & path, const std::vector<float> & samples,
                      int sample_rate);
+
+// Utility: Resample audio linearly
+void resample_linear(const float * input, int input_len, int input_rate,
+                     std::vector<float> & output, int output_rate);
 
 } // namespace qwen3_tts

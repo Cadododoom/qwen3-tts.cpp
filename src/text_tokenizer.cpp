@@ -290,13 +290,34 @@ std::vector<int32_t> TextTokenizer::encode(const std::string & text) const {
     return tokens;
 }
 
-std::vector<int32_t> TextTokenizer::encode_for_tts(const std::string & text) const {
+std::vector<int32_t> TextTokenizer::encode_for_tts(const std::string & text, const std::string & instruction) const {
     if (!loaded_) {
         return {};
     }
     
-    // Format: <|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n
     std::vector<int32_t> tokens;
+    
+    if (!instruction.empty()) {
+        // <|im_start|>
+        tokens.push_back(config_.bos_token_id);
+        
+        // user
+        auto user_tokens = encode("user");
+        tokens.insert(tokens.end(), user_tokens.begin(), user_tokens.end());
+        
+        // \n
+        tokens.push_back(newline_token_id_);
+        
+        // Encode instruction
+        auto inst_tokens = encode(instruction);
+        tokens.insert(tokens.end(), inst_tokens.begin(), inst_tokens.end());
+        
+        // <|im_end|>
+        tokens.push_back(config_.eos_token_id);
+        
+        // \n
+        tokens.push_back(newline_token_id_);
+    }
     
     // <|im_start|>
     tokens.push_back(config_.bos_token_id);

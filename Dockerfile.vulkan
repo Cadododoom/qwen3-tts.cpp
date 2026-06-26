@@ -1,0 +1,59 @@
+# Build stage
+FROM ubuntu:22.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install pre-requisites
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    ca-certificates \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add LunarG Vulkan SDK repository and install vulkan-sdk
+RUN wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc \
+    && wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list http://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends vulkan-sdk glslang-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the source code
+COPY . .
+
+# 1) Build GGML with Vulkan support
+RUN cmake -S ggml -B ggml/build -DGGML_VULKAN=ON
+RUN cmake --build ggml/build -j$(nproc)
+
+# 2) Build qwen3-tts.cpp
+RUN cmake -S . -B build -DQWEN3_TTS_TIMING=ON
+RUN cmake --build build -j$(nproc)
+
+# Runtime stage
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies: Vulkan loader, vulkan-tools, and runtime libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libvulkan1 \
+    vulkan-tools \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Environment variables for NVIDIA Container Toolkit
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display
+
+WORKDIR /app
+
+# Copy compiled binaries and libraries from builder
+COPY --from=builder /app/build/qwen3-tts-cli /app/
+COPY --from=builder /app/build/libqwen3tts.so /app/
+
+# Entrypoint
+ENTRYPOINT ["/app/qwen3-tts-cli"]
