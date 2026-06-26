@@ -38,6 +38,7 @@ struct Qwen3TtsParams {
     int32_t n_threads;
     float   repetition_penalty;
     int32_t language_id;
+    const char * instruction;
 };
 
 struct Qwen3TtsAudio {
@@ -63,6 +64,9 @@ static qwen3_tts::tts_params to_cpp_params(const Qwen3TtsParams * p) {
         params.n_threads         = p->n_threads;
         params.repetition_penalty = p->repetition_penalty;
         params.language_id       = p->language_id;
+        if (p->instruction) {
+            params.instruction = p->instruction;
+        }
     }
     return params;
 }
@@ -96,6 +100,7 @@ void qwen3_tts_default_params(Qwen3TtsParams * params) {
     params->n_threads         = 4;
     params->repetition_penalty = 1.05f;
     params->language_id       = 2050; // en
+    params->instruction       = nullptr;
 }
 
 Qwen3Tts * qwen3_tts_create(const char * model_dir, int32_t n_threads) {
@@ -103,6 +108,19 @@ Qwen3Tts * qwen3_tts_create(const char * model_dir, int32_t n_threads) {
     auto * tts = new Qwen3Tts;
     (void)n_threads; // thread count is set per-call via params
     if (!tts->engine.load_models(model_dir)) {
+        tts->last_error = tts->engine.get_error();
+        delete tts;
+        return nullptr;
+    }
+    return tts;
+}
+
+Qwen3Tts * qwen3_tts_create_with_model_name(const char * model_dir, const char * model_name, int32_t n_threads) {
+    if (!model_dir) return nullptr;
+    auto * tts = new Qwen3Tts;
+    (void)n_threads;
+    std::string m_name = model_name ? model_name : "";
+    if (!tts->engine.load_models(model_dir, m_name)) {
         tts->last_error = tts->engine.get_error();
         delete tts;
         return nullptr;

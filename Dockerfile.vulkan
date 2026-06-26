@@ -38,12 +38,19 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime dependencies: Vulkan loader, vulkan-tools, and runtime libs
+# Install runtime dependencies: Vulkan loader, vulkan-tools, mesa-vulkan-drivers, libgomp1, python3, and pip
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libvulkan1 \
     vulkan-tools \
+    mesa-vulkan-drivers \
     ca-certificates \
+    libgomp1 \
+    python3 \
+    python3-pip \
+    python3-setuptools \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir fastapi uvicorn websockets numpy
 
 # Environment variables for NVIDIA Container Toolkit
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -53,7 +60,15 @@ WORKDIR /app
 
 # Copy compiled binaries and libraries from builder
 COPY --from=builder /app/build/qwen3-tts-cli /app/
-COPY --from=builder /app/build/libqwen3tts.so /app/
+COPY --from=builder /app/build/libqwen3tts.so* /usr/local/lib/
+COPY --from=builder /app/ggml/build/src/libggml*.so* /usr/local/lib/
+COPY --from=builder /app/ggml/build/src/ggml-vulkan/libggml-vulkan.so* /usr/local/lib/
 
-# Entrypoint
-ENTRYPOINT ["/app/qwen3-tts-cli"]
+# Copy python wrapper and API server
+COPY qwen3_tts_vulkan.py /app/
+COPY app_vulkan.py /app/
+
+RUN ldconfig
+
+# Entrypoint to run FastAPI server
+ENTRYPOINT ["uvicorn", "app_vulkan:app", "--host", "0.0.0.0", "--port", "8090"]

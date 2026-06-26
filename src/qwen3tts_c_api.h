@@ -20,6 +20,7 @@ typedef struct Qwen3TtsParams {
     int32_t n_threads;           /* default: 4 */
     float   repetition_penalty;  /* default: 1.05 */
     int32_t language_id;         /* 2050=en, 2058=ja, 2055=zh, etc. */
+    const char* instruction;     /* default: NULL (empty) */
 } Qwen3TtsParams;
 
 /* Generated audio result */
@@ -32,11 +33,11 @@ typedef struct Qwen3TtsAudio {
 /* Fill params with defaults */
 void qwen3_tts_default_params(Qwen3TtsParams* params);
 
-/* Create TTS engine and load models from directory.
- * model_dir must contain qwen3-tts-0.6b-f16.gguf and
- * qwen3-tts-tokenizer-f16.gguf.
- * Returns NULL on failure. */
 Qwen3Tts* qwen3_tts_create(const char* model_dir, int32_t n_threads);
+
+/* Create TTS engine and load specific GGUF model filename from directory.
+ * Returns NULL on failure. */
+Qwen3Tts* qwen3_tts_create_with_model_name(const char* model_dir, const char* model_name, int32_t n_threads);
 
 /* Check if models are loaded */
 int qwen3_tts_is_loaded(const Qwen3Tts* tts);

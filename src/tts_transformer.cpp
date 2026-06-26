@@ -379,7 +379,7 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
             continue;
         }
         
-        if (strstr(name, "talker.text_embd.weight")) {
+        if (strstr(name, "talker.text_embd.weight") || strstr(name, "talker.token_embd_text.weight")) {
             ne[0] = cfg.text_embd_dim;
             ne[1] = cfg.text_vocab_size;
             n_dims = 2;
@@ -397,11 +397,11 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
         } else if (strstr(name, "talker.text_proj.fc2.bias")) {
             ne[0] = cfg.hidden_size;
             n_dims = 1;
-        } else if (strstr(name, "talker.codec_embd.weight")) {
+        } else if (strstr(name, "talker.codec_embd.weight") || strstr(name, "talker.token_embd.weight")) {
             ne[0] = cfg.hidden_size;
             ne[1] = cfg.codec_vocab_size;
             n_dims = 2;
-        } else if (strstr(name, "talker.codec_head.weight")) {
+        } else if (strstr(name, "talker.codec_head.weight") || strstr(name, "talker.output.weight")) {
             ne[0] = cfg.hidden_size;
             ne[1] = cfg.codec_vocab_size;
             n_dims = 2;
@@ -513,9 +513,10 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
             } else {
                 continue;
             }
-        } else if (strstr(name, "code_pred.codec_embd.")) {
+        } else if (strstr(name, "code_pred.codec_embd.") || strstr(name, "code_pred.token_embd.")) {
             int cb_idx = -1;
-            if (sscanf(name, "code_pred.codec_embd.%d.weight", &cb_idx) == 1 &&
+            if ((sscanf(name, "code_pred.codec_embd.%d.weight", &cb_idx) == 1 ||
+                 sscanf(name, "code_pred.token_embd.%d.weight", &cb_idx) == 1) &&
                 cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
                 ne[0] = cfg.hidden_size;
                 ne[1] = cfg.code_pred_vocab_size;
@@ -523,19 +524,20 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
             } else {
                 continue;
             }
-         } else if (strstr(name, "code_pred.lm_head.")) {
-             if (skip_ggml_code_pred_layers_) {
-                 continue;
-             }
-             int cb_idx = -1;
-             if (sscanf(name, "code_pred.lm_head.%d.weight", &cb_idx) == 1 &&
-                 cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
-                 ne[0] = cfg.hidden_size;
-                 ne[1] = cfg.code_pred_vocab_size;
-                 n_dims = 2;
-             } else {
-                 continue;
-             }
+          } else if (strstr(name, "code_pred.lm_head.") || strstr(name, "code_pred.output.")) {
+              if (skip_ggml_code_pred_layers_) {
+                  continue;
+              }
+              int cb_idx = -1;
+              if ((sscanf(name, "code_pred.lm_head.%d.weight", &cb_idx) == 1 ||
+                   sscanf(name, "code_pred.output.%d.weight", &cb_idx) == 1) &&
+                  cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
+                  ne[0] = cfg.hidden_size;
+                  ne[1] = cfg.code_pred_vocab_size;
+                  n_dims = 2;
+              } else {
+                  continue;
+              }             
          } else if (strstr(name, "code_pred.output_norm.weight")) {
              if (skip_ggml_code_pred_layers_) {
                  continue;
@@ -554,7 +556,7 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
         ggml_set_name(tensor, name);
         model_.tensors[name] = tensor;
         
-        if (strstr(name, "talker.text_embd.weight")) {
+        if (strstr(name, "talker.text_embd.weight") || strstr(name, "talker.token_embd_text.weight")) {
             model_.text_embd = tensor;
         } else if (strstr(name, "talker.text_proj.fc1.weight")) {
             model_.text_proj_fc1 = tensor;
@@ -564,9 +566,9 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
             model_.text_proj_fc2 = tensor;
         } else if (strstr(name, "talker.text_proj.fc2.bias")) {
             model_.text_proj_fc2_bias = tensor;
-        } else if (strstr(name, "talker.codec_embd.weight")) {
+        } else if (strstr(name, "talker.codec_embd.weight") || strstr(name, "talker.token_embd.weight")) {
             model_.codec_embd = tensor;
-        } else if (strstr(name, "talker.codec_head.weight")) {
+        } else if (strstr(name, "talker.codec_head.weight") || strstr(name, "talker.output.weight")) {
             model_.codec_head = tensor;
         } else if (strstr(name, "talker.output_norm.weight")) {
             model_.output_norm = tensor;
@@ -604,19 +606,23 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
                 else if (strstr(name, "ffn_up.weight")) layer.ffn_up = tensor;
                 else if (strstr(name, "ffn_down.weight")) layer.ffn_down = tensor;
             }
-        } else if (strstr(name, "code_pred.codec_embd.")) {
+        } else if (strstr(name, "code_pred.codec_embd.") || strstr(name, "code_pred.token_embd.")) {
             int cb_idx = -1;
-            sscanf(name, "code_pred.codec_embd.%d.weight", &cb_idx);
-            if (cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
-                model_.code_pred_embd[cb_idx] = tensor;
+            if (sscanf(name, "code_pred.codec_embd.%d.weight", &cb_idx) == 1 ||
+                sscanf(name, "code_pred.token_embd.%d.weight", &cb_idx) == 1) {
+                if (cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
+                    model_.code_pred_embd[cb_idx] = tensor;
+                }
             }
-         } else if (strstr(name, "code_pred.lm_head.")) {
-             int cb_idx = -1;
-             sscanf(name, "code_pred.lm_head.%d.weight", &cb_idx);
-             if (cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
-                 model_.code_pred_head[cb_idx] = tensor;
-             }
-         } else if (strstr(name, "code_pred.output_norm.weight")) {
+        } else if (strstr(name, "code_pred.lm_head.") || strstr(name, "code_pred.output.")) {
+            int cb_idx = -1;
+            if (sscanf(name, "code_pred.lm_head.%d.weight", &cb_idx) == 1 ||
+                sscanf(name, "code_pred.output.%d.weight", &cb_idx) == 1) {
+                if (cb_idx >= 0 && cb_idx < cfg.n_codebooks - 1) {
+                    model_.code_pred_head[cb_idx] = tensor;
+                }
+            }
+        } else if (strstr(name, "code_pred.output_norm.weight")) {
              model_.code_pred_output_norm = tensor;
          }
      }
