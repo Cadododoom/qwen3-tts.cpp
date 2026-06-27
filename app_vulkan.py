@@ -3,6 +3,7 @@ import sys
 import json
 import numpy as np
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from qwen3_tts_vulkan import Qwen3TTSVulkan
 
@@ -137,7 +138,99 @@ def clean_tts_text(text: str) -> str:
     
     # Normalize spaces
     text = re.sub(r'\s+', ' ', text).strip()
+    
+    # Cap to 70 words to stay under the 15-second client timeout
+    words = text.split()
+    if len(words) > 70:
+        text = " ".join(words[:70]) + "..."
+        
     return text
+
+
+def make_wav_header(sample_rate: int = 24000, channels: int = 1, bits_per_sample: int = 16) -> bytes:
+    import struct
+    data_size = 0x7F000000
+    file_size = data_size + 36
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF',
+        file_size,
+        b'WAVE',
+        b'fmt ',
+        16,
+        1,
+        channels,
+        sample_rate,
+        sample_rate * channels * (bits_per_sample // 8),
+        channels * (bits_per_sample // 8),
+        bits_per_sample,
+        b'data',
+        data_size
+    )
+    return header
+
+def stream_openai_tts(text: str, voice: str):
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    if not sentences:
+        yield make_wav(b"", sample_rate=24000)
+        return
+        
+    yield make_wav_header(sample_rate=24000)
+    
+    embedding = get_voice_embedding(voice)
+    
+    for sentence in sentences:
+        cleaned = clean_tts_text(sentence)
+        if not cleaned:
+            continue
+            
+        try:
+            if embedding is not None:
+                pcm_bytes = engine.synthesize_with_embedding(
+                    text=cleaned,
+                    embedding=embedding,
+                    language="en"
+                )
+            else:
+                pcm_bytes = engine.synthesize(
+                    text=cleaned,
+                    language="en"
+                )
+            yield pcm_bytes
+        except Exception as e:
+            print(f"[Streaming OpenAI TTS Error] {e}")
+            break
+
+def stream_vapi_tts(text: str, voice: str, language: str):
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    if not sentences:
+        yield b""
+        return
+        
+    embedding = get_voice_embedding(voice)
+    
+    for sentence in sentences:
+        cleaned = clean_tts_text(sentence)
+        if not cleaned:
+            continue
+            
+        try:
+            if embedding is not None:
+                pcm_bytes = engine.synthesize_with_embedding(
+                    text=cleaned,
+                    embedding=embedding,
+                    language=language
+                )
+            else:
+                pcm_bytes = engine.synthesize(
+                    text=cleaned,
+                    language=language
+                )
+            resampled = resample_24k_to_16k(pcm_bytes)
+            yield resampled
+        except Exception as e:
+            print(f"[Streaming Vapi TTS Error] {e}")
+            break
 
 
 class OpenAIRequest(BaseModel):
@@ -151,30 +244,12 @@ class OpenAIRequest(BaseModel):
 def openai_tts(request: OpenAIRequest):
     cleaned_input = clean_tts_text(request.input)
     if not cleaned_input.strip():
-        # Return empty wav file to avoid client crash
         return Response(content=make_wav(b"", sample_rate=24000), media_type="audio/wav")
         
-    try:
-        # Check if we have a custom voice embedding
-        embedding = get_voice_embedding(request.voice)
-        
-        # Determine language (default to en)
-        if embedding is not None:
-            pcm_bytes = engine.synthesize_with_embedding(
-                text=cleaned_input,
-                embedding=embedding,
-                language="en"
-            )
-        else:
-            pcm_bytes = engine.synthesize(
-                text=cleaned_input,
-                language="en"
-            )
-            
-        wav_bytes = make_wav(pcm_bytes, sample_rate=24000)
-        return Response(content=wav_bytes, media_type="audio/wav")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(
+        stream_openai_tts(request.input, request.voice),
+        media_type="audio/wav"
+    )
 
 
 class VapiTTSRequest(BaseModel):
@@ -188,26 +263,10 @@ def vapi_tts(request: VapiTTSRequest):
     if not cleaned_text.strip():
         return Response(content=b"", media_type="audio/l16")
         
-    try:
-        embedding = get_voice_embedding(request.voice)
-        
-        if embedding is not None:
-            pcm_bytes = engine.synthesize_with_embedding(
-                text=cleaned_text,
-                embedding=embedding,
-                language=request.language
-            )
-        else:
-            pcm_bytes = engine.synthesize(
-                text=cleaned_text,
-                language=request.language
-            )
-            
-        # Vapi expects 16kHz L16 (raw 16-bit signed PCM mono)
-        resampled_bytes = resample_24k_to_16k(pcm_bytes)
-        return Response(content=resampled_bytes, media_type="audio/l16")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(
+        stream_vapi_tts(request.text, request.voice, request.language),
+        media_type="audio/l16"
+    )
 
 
 @app.get("/health")
