@@ -168,7 +168,7 @@ class Qwen3TTSVulkan:
             
     def _estimate_tokens(self, text: str) -> int:
         n_words = len(str(text).split())
-        return min(300, max(20, int(n_words * 8 + 10)))
+        return min(8000, max(20, int(n_words * 12 + 200)))
 
     def synthesize(self, text: str, **kwargs) -> bytes:
         if "max_tokens" not in kwargs:
