@@ -142,10 +142,10 @@ def clean_tts_text(text: str) -> str:
     # Normalize spaces
     text = re.sub(r'\s+', ' ', text).strip()
     
-    # Cap to 70 words to stay under the 15-second client timeout
+    # Cap to 40 words to stay under the 15-second client timeout
     words = text.split()
-    if len(words) > 70:
-        text = " ".join(words[:70]) + "..."
+    if len(words) > 40:
+        text = " ".join(words[:40]) + "..."
         
     return text
 
@@ -173,7 +173,8 @@ def make_wav_header(sample_rate: int = 24000, channels: int = 1, bits_per_sample
     return header
 
 def stream_openai_tts(text: str, voice: str):
-    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    cleaned_text = clean_tts_text(text)
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', cleaned_text) if s.strip()]
     if not sentences:
         yield make_wav(b"", sample_rate=24000)
         return
@@ -183,21 +184,17 @@ def stream_openai_tts(text: str, voice: str):
     embedding = get_voice_embedding(voice)
     
     for sentence in sentences:
-        cleaned = clean_tts_text(sentence)
-        if not cleaned:
-            continue
-            
         try:
             with engine_lock:
                 if embedding is not None:
                     pcm_bytes = engine.synthesize_with_embedding(
-                        text=cleaned,
+                        text=sentence,
                         embedding=embedding,
                         language="en"
                     )
                 else:
                     pcm_bytes = engine.synthesize(
-                        text=cleaned,
+                        text=sentence,
                         language="en"
                     )
             yield pcm_bytes
@@ -206,7 +203,8 @@ def stream_openai_tts(text: str, voice: str):
             break
 
 def stream_vapi_tts(text: str, voice: str, language: str):
-    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    cleaned_text = clean_tts_text(text)
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', cleaned_text) if s.strip()]
     if not sentences:
         yield b""
         return
@@ -214,21 +212,17 @@ def stream_vapi_tts(text: str, voice: str, language: str):
     embedding = get_voice_embedding(voice)
     
     for sentence in sentences:
-        cleaned = clean_tts_text(sentence)
-        if not cleaned:
-            continue
-            
         try:
             with engine_lock:
                 if embedding is not None:
                     pcm_bytes = engine.synthesize_with_embedding(
-                        text=cleaned,
+                        text=sentence,
                         embedding=embedding,
                         language=language
                     )
                 else:
                     pcm_bytes = engine.synthesize(
-                        text=cleaned,
+                        text=sentence,
                         language=language
                     )
             resampled = resample_24k_to_16k(pcm_bytes)
