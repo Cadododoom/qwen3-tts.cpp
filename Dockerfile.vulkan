@@ -38,23 +38,36 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install runtime dependencies: Vulkan loader, vulkan-tools, mesa-vulkan-drivers, libgomp1, python3, and pip
+# Install runtime dependencies: Vulkan loader, vulkan-tools, mesa-vulkan-drivers, libgomp1, python3, pip, and OpenGL/X11 libraries for NVIDIA
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    ca-certificates \
+    gnupg \
+    && wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc \
+    && wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list http://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     libvulkan1 \
     vulkan-tools \
     mesa-vulkan-drivers \
-    ca-certificates \
     libgomp1 \
     python3 \
     python3-pip \
     python3-setuptools \
+    libxext6 \
+    libegl1 \
+    libglvnd0 \
+    libgl1 \
+    libglx0 \
+    libxcb-glx0 \
+    libx11-6 \
+    && apt-get purge -y wget gnupg \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir fastapi uvicorn websockets numpy
 
-# Environment variables for NVIDIA Container Toolkit
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics,display
+# Environment variables for NVIDIA Container Toolkit - Exclude NVIDIA GPUs
+ENV NVIDIA_VISIBLE_DEVICES=none
 
 WORKDIR /app
 

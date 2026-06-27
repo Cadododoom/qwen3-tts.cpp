@@ -166,12 +166,20 @@ class Qwen3TTSVulkan:
         finally:
             lib.qwen3_tts_free_audio(audio_ptr)
             
+    def _estimate_tokens(self, text: str) -> int:
+        n_words = len(str(text).split())
+        return min(300, max(20, int(n_words * 8 + 10)))
+
     def synthesize(self, text: str, **kwargs) -> bytes:
+        if "max_tokens" not in kwargs:
+            kwargs["max_tokens"] = self._estimate_tokens(text)
         params = self._get_params(**kwargs)
         audio_ptr = lib.qwen3_tts_synthesize(self.handle, text.encode("utf-8"), ctypes.byref(params))
         return self._audio_to_numpy_int16(audio_ptr)
         
     def synthesize_with_voice_file(self, text: str, reference_audio_path: str, **kwargs) -> bytes:
+        if "max_tokens" not in kwargs:
+            kwargs["max_tokens"] = self._estimate_tokens(text)
         params = self._get_params(**kwargs)
         audio_ptr = lib.qwen3_tts_synthesize_with_voice_file(
             self.handle, 
@@ -191,6 +199,8 @@ class Qwen3TTSVulkan:
         return embedding
         
     def synthesize_with_embedding(self, text: str, embedding: np.ndarray, **kwargs) -> bytes:
+        if "max_tokens" not in kwargs:
+            kwargs["max_tokens"] = self._estimate_tokens(text)
         params = self._get_params(**kwargs)
         emb_ptr = embedding.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         audio_ptr = lib.qwen3_tts_synthesize_with_embedding(

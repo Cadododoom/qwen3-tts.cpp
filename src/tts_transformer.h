@@ -80,6 +80,8 @@ struct tts_transformer_config {
     // Code predictor
     int32_t code_pred_layers = 5;
     int32_t code_pred_vocab_size = 2048;  // Per-codebook vocab
+    int32_t code_pred_hidden_size = 1024;
+    int32_t code_pred_intermediate_size = 3072;
     
     // Special codec tokens
     int32_t codec_pad_id = 2148;
@@ -148,6 +150,10 @@ struct tts_transformer_model {
      // Code predictor per-codebook embeddings and heads (15 codebooks, 0 uses talker output)
      std::vector<struct ggml_tensor *> code_pred_embd;  // [hidden_size, code_pred_vocab_size] x 15
      std::vector<struct ggml_tensor *> code_pred_head;  // [hidden_size, code_pred_vocab_size] x 15
+
+     // Code predictor inputs projection (from talker hidden_size to code_pred_hidden_size)
+     struct ggml_tensor * code_pred_small_to_mtp_w = nullptr;
+     struct ggml_tensor * code_pred_small_to_mtp_b = nullptr;
     
     // GGML context for tensor metadata
     struct ggml_context * ctx = nullptr;
