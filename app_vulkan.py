@@ -97,6 +97,49 @@ def get_voice_embedding(voice_name: str) -> np.ndarray:
     return None
 
 
+import re
+
+def clean_tts_text(text: str) -> str:
+    if not text:
+        return ""
+        
+    # Strip thinking blocks
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Handle unclosed tags
+    if re.search(r'<think>', text, re.IGNORECASE):
+        text = re.compile(r'<think>', re.IGNORECASE).split(text)[0]
+    if re.search(r'<thought>', text, re.IGNORECASE):
+        text = re.compile(r'<thought>', re.IGNORECASE).split(text)[0]
+        
+    # Strip tool call and response blocks
+    text = re.sub(r'<tool_call>.*?</tool_call>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<tool_response>.*?</tool_response>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    if re.search(r'<tool_call>', text, re.IGNORECASE):
+        text = re.compile(r'<tool_call>', re.IGNORECASE).split(text)[0]
+    if re.search(r'<tool_response>', text, re.IGNORECASE):
+        text = re.compile(r'<tool_response>', re.IGNORECASE).split(text)[0]
+        
+    # Strip code blocks
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+    
+    # Strip standalone JSON/dictionary objects (e.g. tool call arguments)
+    text = re.sub(r'\{"\w+".*?\}', '', text, flags=re.DOTALL)
+    
+    # Convert markdown links [text](url) to just text
+    text = re.sub(r'\[(.*?)\]\(.*?\)', r'\1', text)
+    
+    # Clean up formatting characters
+    text = text.replace("**", "").replace("*", "").replace("`", "")
+    text = re.sub(r'#+\s*', '', text) # Strip markdown headers
+    
+    # Normalize spaces
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
 class OpenAIRequest(BaseModel):
     model: str = "qwen3"
     input: str
@@ -106,8 +149,10 @@ class OpenAIRequest(BaseModel):
 
 @app.post("/v1/audio/speech")
 def openai_tts(request: OpenAIRequest):
-    if not request.input.strip():
-        raise HTTPException(status_code=400, detail="Input text cannot be empty")
+    cleaned_input = clean_tts_text(request.input)
+    if not cleaned_input.strip():
+        # Return empty wav file to avoid client crash
+        return Response(content=make_wav(b"", sample_rate=24000), media_type="audio/wav")
         
     try:
         # Check if we have a custom voice embedding
@@ -116,13 +161,13 @@ def openai_tts(request: OpenAIRequest):
         # Determine language (default to en)
         if embedding is not None:
             pcm_bytes = engine.synthesize_with_embedding(
-                text=request.input,
+                text=cleaned_input,
                 embedding=embedding,
                 language="en"
             )
         else:
             pcm_bytes = engine.synthesize(
-                text=request.input,
+                text=cleaned_input,
                 language="en"
             )
             
@@ -139,7 +184,8 @@ class VapiTTSRequest(BaseModel):
 
 @app.post("/vapi-tts")
 def vapi_tts(request: VapiTTSRequest):
-    if not request.text.strip():
+    cleaned_text = clean_tts_text(request.text)
+    if not cleaned_text.strip():
         return Response(content=b"", media_type="audio/l16")
         
     try:
@@ -147,13 +193,13 @@ def vapi_tts(request: VapiTTSRequest):
         
         if embedding is not None:
             pcm_bytes = engine.synthesize_with_embedding(
-                text=request.text,
+                text=cleaned_text,
                 embedding=embedding,
                 language=request.language
             )
         else:
             pcm_bytes = engine.synthesize(
-                text=request.text,
+                text=cleaned_text,
                 language=request.language
             )
             
