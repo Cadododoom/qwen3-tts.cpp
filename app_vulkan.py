@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import numpy as np
+import threading
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -29,6 +30,8 @@ try:
 except Exception as e:
     print(f"[API] Error loading Qwen3-TTS Vulkan engine: {e}")
     sys.exit(1)
+
+engine_lock = threading.Lock()
 
 
 # Helper: resample mono int16 PCM from 24kHz to 16kHz
@@ -185,17 +188,18 @@ def stream_openai_tts(text: str, voice: str):
             continue
             
         try:
-            if embedding is not None:
-                pcm_bytes = engine.synthesize_with_embedding(
-                    text=cleaned,
-                    embedding=embedding,
-                    language="en"
-                )
-            else:
-                pcm_bytes = engine.synthesize(
-                    text=cleaned,
-                    language="en"
-                )
+            with engine_lock:
+                if embedding is not None:
+                    pcm_bytes = engine.synthesize_with_embedding(
+                        text=cleaned,
+                        embedding=embedding,
+                        language="en"
+                    )
+                else:
+                    pcm_bytes = engine.synthesize(
+                        text=cleaned,
+                        language="en"
+                    )
             yield pcm_bytes
         except Exception as e:
             print(f"[Streaming OpenAI TTS Error] {e}")
@@ -215,17 +219,18 @@ def stream_vapi_tts(text: str, voice: str, language: str):
             continue
             
         try:
-            if embedding is not None:
-                pcm_bytes = engine.synthesize_with_embedding(
-                    text=cleaned,
-                    embedding=embedding,
-                    language=language
-                )
-            else:
-                pcm_bytes = engine.synthesize(
-                    text=cleaned,
-                    language=language
-                )
+            with engine_lock:
+                if embedding is not None:
+                    pcm_bytes = engine.synthesize_with_embedding(
+                        text=cleaned,
+                        embedding=embedding,
+                        language=language
+                    )
+                else:
+                    pcm_bytes = engine.synthesize(
+                        text=cleaned,
+                        language=language
+                    )
             resampled = resample_24k_to_16k(pcm_bytes)
             yield resampled
         except Exception as e:
